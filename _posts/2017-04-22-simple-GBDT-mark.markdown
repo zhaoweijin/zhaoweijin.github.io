@@ -272,7 +272,7 @@ class Model:
                     y=1.0;
                 residual[id][label]=y-p;
         return residual;
-    # 计算实例的值（训练/测试）
+    # 计算标签实例的预估值（训练/测试）
     def compute_instance_f_value(self,instance,label_valueset):
         f_value=dict();
         for label in label_valueset:
@@ -282,22 +282,22 @@ class Model:
                 tree=self.trees[iter][label];
                 # 更新标签实例对应的值=标签实例对应的值+学习率*决策树的预估值
                 f_value[label]=f_value[label]+self.learn_rate*tree.get_predict_value(instance); # 把测试数据代入决策树分类
-        return f_value;
+        return f_value; # e.g. {' >50K': 0.003975535168195719, ' <=50K': -0.003975535168195719}
     def test(self,dataset,test_data):
-        right_predition=0; # 真确预测
+        right_predition=0; # 正确预估值
         label_valueset=dataset.get_label_valueset(); # 获取标签值
-        risk=0.0;
+        risk=0.0; # 总预估错的风险
         for id in test_data:
             instance=dataset.get_instance(id); #获取实例样本值
             predict_label,probs=self.predict_label(instance,label_valueset); # 预估的标签，预估正确的几率
-            single_risk=0.0;
+            single_risk=0.0; # 单个样本预估错的几率
             for label in probs:
                 if label==instance["label"]:
-                    single_risk=single_risk+(1.0-probs[label]);
+                    single_risk=single_risk+(1.0-probs[label]); # 1-成功几率
                 else:
-                    single_risk=single_risk+probs[label];
+                    single_risk=single_risk+probs[label]; # 预估错的几率
             #print probs,"instance label=",instance["label"],"##single_risk=",single_risk/len(probs);
-            risk=risk+single_risk/len(probs);
+            risk=risk+single_risk/len(probs); #总预估值+单预估几率/预估次数
             if instance["label"]==predict_label:
                 right_predition=right_predition+1;
         #print "test data size=%d,test accuracy=%f"%(len(test_data),float(right_predition)/len(test_data));       
@@ -334,11 +334,15 @@ class Tree:
         self.real_value_feature=True;
         self.conditionValue=None;
         self.leafNode=None;
+    # 获取预估值
     def get_predict_value(self,instance):
+        # 是否叶节点
         if self.leafNode!=None:  ## we are in the leaf node
-            return self.leafNode.get_predict_value();
+            return self.leafNode.get_predict_value(); # 返回叶节点（Leafnode）预估值
+        # 切分的特征
         if self.split_feature==None:
             raise ValueError("the tree is null");
+        # 是否是数字类型，并且小于当前的条件值
         if self.real_value_feature and instance[self.split_feature]<self.conditionValue:
             return self.leftTree.get_predict_value(instance);
         elif not self.real_value_feature and instance[self.split_feature]==self.conditionValue:
