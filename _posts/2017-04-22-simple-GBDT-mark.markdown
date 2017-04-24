@@ -215,7 +215,7 @@ class Model:
                #if label==sample(label_valueset,1)[0]:
                #    print tree.describe("#"*30+"Tree Description"+"#"*30+"\n");
                self.trees[iter][label]=tree; # 某个迭代的标签子树
-               self.update_f_value(f,tree,leafNodes,subset,dataset,label); # 更新训练数据实例的值
+               self.update_f_value(f,tree,leafNodes,subset,dataset,label); # 更新训练数据实例的值（根据决策树的预估值*学习率）
            ## for debug
            #print "residual=",residual;
            if test_data!=None:
@@ -242,23 +242,29 @@ class Model:
                 exp_values[label]=exp(f_values[label]);
             probs={};
             for label in f_values:
-                probs[label]=exp_values[label]/sum(exp_values.values());
-            loss=loss-log(probs[instance["label"]]);
+                probs[label]=exp_values[label]/sum(exp_values.values()); # 求softmax
+            loss=loss-log(probs[instance["label"]]); #对数似然损失函数
         return loss/len(subset);
     def initialize(self,f,dataset):
         for id in dataset.get_instances_idset():
             f[id]=dict();
             for label in dataset.get_label_valueset():
                 f[id][label]=0.0;
+    # 更新训练实例的值
     def update_f_value(self,f,tree,leafNodes,subset,dataset,label):
         data_idset=set(dataset.get_instances_idset());
         subset=set(subset);
+        
+        # 迭代后最优的叶节点
         for node in leafNodes:
+            # 最优的叶节点的样本实例
             for id in node.get_idset():
-                f[id][label]=f[id][label]+self.learn_rate*node.get_predict_value();
+                f[id][label]=f[id][label]+self.learn_rate*node.get_predict_value(); # 学习率*预估值
         ## for id not in subset, we have to predict by retrive the tree
+        # 不在训练集中的数据，我们也通过决策树进行预估
         for id in data_idset-subset:
             f[id][label]=f[id][label]+self.learn_rate*tree.get_predict_value(dataset.get_instance(id));
+    # 计算残差
     def compute_residual(self,dataset,subset,f):
         residual={};
         label_valueset=dataset.get_label_valueset();
@@ -270,7 +276,7 @@ class Model:
                 y=0.0;
                 if dataset.get_instance(id)["label"]==label:
                     y=1.0;
-                residual[id][label]=y-p;
+                residual[id][label]=y-p; # 计算残差y-softmax
         return residual;
     # 计算标签实例的预估值（训练/测试）
     def compute_instance_f_value(self,instance,label_valueset):
@@ -286,21 +292,22 @@ class Model:
     def test(self,dataset,test_data):
         right_predition=0; # 正确预估值
         label_valueset=dataset.get_label_valueset(); # 获取标签值
-        risk=0.0; # 总预估错的风险
+        risk=0.0; # 总预估错的风险标值
         for id in test_data:
             instance=dataset.get_instance(id); #获取实例样本值
             predict_label,probs=self.predict_label(instance,label_valueset); # 预估的标签，预估正确的几率
-            single_risk=0.0; # 单个样本预估错的几率
+            single_risk=0.0; # 单个样本预估错的标值
             for label in probs:
                 if label==instance["label"]:
-                    single_risk=single_risk+(1.0-probs[label]); # 1-成功几率
+                    single_risk=single_risk+(1.0-probs[label]); # 1-正确的几率
                 else:
-                    single_risk=single_risk+probs[label]; # 预估错的几率
+                    single_risk=single_risk+probs[label]; # 预估错的标值
             #print probs,"instance label=",instance["label"],"##single_risk=",single_risk/len(probs);
-            risk=risk+single_risk/len(probs); #总预估值+单预估几率/预估次数
+            risk=risk+single_risk/len(probs); #总预估值+单预估标值/预估次数
             if instance["label"]==predict_label:
                 right_predition=right_predition+1;
         #print "test data size=%d,test accuracy=%f"%(len(test_data),float(right_predition)/len(test_data));       
+        # 返回预估正确的几率，预估错误的几率
         return float(right_predition)/len(test_data),risk/len(test_data);
     
     # 预估标签
@@ -367,7 +374,7 @@ class LeafNode:
         return self.predictValue;
     def update_predict_value(self,targets,K): ## K is number of class, just for classification
         sum1=sum([targets[x] for x in self.idset]);
-        sum2=sum([abs(targets[x])*(1.0-abs(targets[x])) for x in self.idset]);
+        sum2=sum([abs(targets[x])*(1.0-abs(targets[x])) for x in self.idset]); # Gini指数
 #        self.predictValue=float(K-1)/K*(sum1/sum2);
         #self.predictValue=sum([targets[x] for x in self.idset])/len(self.idset);
         if sum1==0:
@@ -383,30 +390,37 @@ class LeafNode:
         #print "targets=",[targets[x] for x in self.idset];
         #print "sum1=",sum1,"sum2=",sum2;
         #print "predict value=",self.predictValue; 
+# 计算最小化平方差损失函数
 def compute_min_loss(values):
     if len(values)<2:
         return 0;
-    mean=sum(values)/float(len(values));
+    mean=sum(values)/float(len(values)); # 均值
     loss=0.0;
     for v in values:
-        loss=loss+(mean-v)*(mean-v);
+        loss=loss+(mean-v)*(mean-v); # 与均值求方差
     return loss;
 ## if split_points is larger than 0, we just random choice split_points to evalute minLoss when consider real-value split
+
+# 构建决策树（target,某个标签分类下，数据集的预估值 e.g. '>50K':{1:0.5,2:-0.5:...}）
 def construct_decision_tree(dataset,remainedSet,targets,depth,leafNodes,max_depth,split_points=0):
     #print "start process,depth=",depth;
+    
+    # 根据传参的最大深度
     if depth<max_depth:
-        attributes=dataset.get_attributes();
+        attributes=dataset.get_attributes(); # 获取表头字段
         loss=-1;
-        selectedAttribute=None;
-        conditionValue=None;
-        selectedLeftIdSet=[];
-        selectedRightIdSet=[];       
+        selectedAttribute=None; # 当前分隔最优选择的特征
+        conditionValue=None; # 当前分隔最优选择的特征的值
+        selectedLeftIdSet=[]; # 当前分隔最优左节点的样本集
+        selectedRightIdSet=[]; # 当前分隔最优右节点的样本集       
         for attribute in attributes:
            # print "start process attribute=",attribute;
             is_real_type=dataset.is_real_type_field(attribute);
             attrValues=dataset.get_distinct_valueset(attribute);  # 获取全量样本的某个字段的值
-            if is_real_type and split_points>0 and len(attrValues)>split_points:  ## need subsample split points to speed up
+            if is_real_type and split_points>0 and len(attrValues)>split_points:  ## 超出设置的样本阀值，则按照阀值抽样
                 attrValues=sample(attrValues,split_points);
+                
+            # 轮询特征的每一个值进行分类
             for attrValue in attrValues:
                 leftIdSet=[];
                 rightIdSet=[];
@@ -414,12 +428,12 @@ def construct_decision_tree(dataset,remainedSet,targets,depth,leafNodes,max_dept
                     instance=dataset.get_instance(Id);
                     value=instance[attribute];
                     if (is_real_type and value<attrValue)or(not is_real_type and value==attrValue):   ## fall into the left
-                        leftIdSet.append(Id);
+                        leftIdSet.append(Id); # 少于特征值归左节点
                     else:
-                        rightIdSet.append(Id);
+                        rightIdSet.append(Id); # 大于特征值归右节点
                 leftTargets=[targets[id] for id in leftIdSet];
                 rightTargets=[targets[id] for id in rightIdSet];
-                sumLoss=compute_min_loss(leftTargets)+compute_min_loss(rightTargets);
+                sumLoss=compute_min_loss(leftTargets)+compute_min_loss(rightTargets); # 计算平方误差最小
                 if loss<0 or sumLoss<loss:
                     selectedAttribute=attribute;
                     conditionValue=attrValue;
@@ -439,9 +453,9 @@ def construct_decision_tree(dataset,remainedSet,targets,depth,leafNodes,max_dept
         #print "build a tree,min loss=",loss,"conditon value=",conditionValue,"attribute=",tree.split_feature;
         return tree;
     else:  ## is a leaf node
-        node=LeafNode(remainedSet);
+        node=LeafNode(remainedSet); # 初始化叶节点
         K=dataset.get_label_size();
-        node.update_predict_value(targets,K);
+        node.update_predict_value(targets,K); # 更新target预估值
         leafNodes.append(node); ## add a leaf node
         tree=Tree();
         tree.leafNode=node;
